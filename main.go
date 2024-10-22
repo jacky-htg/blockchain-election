@@ -1,34 +1,55 @@
 package main
 
 import (
+	"bufio"
+	"flag"
 	"fmt"
-	"time"
-
 	"myapp/app/blockchain"
+	"myapp/app/peer"
+	"os"
 )
 
+func readInput(p2p *peer.P2PNetwork) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		data := scanner.Text()
+		block := p2p.Blockchain.AddBlock(data)
+		p2p.BroadcastBlock(block)
+		fmt.Println("Added new block:", block)
+	}
+}
+
 func main() {
-	// Membuat blockchain baru
-	bc := blockchain.Blockchain{}
+	port := flag.String("port", "3000", "Port to listen on")
+	flag.Parse()
 
-	// Menambahkan genesis block
-	bc.AddBlock("Genesis Block")
+	// Membuat jaringan P2P baru
+	p2p := peer.NewP2PNetwork()
 
-	// Menambahkan beberapa transaksi
-	bc.AddBlock("Transaction 1")
-	bc.AddBlock("Transaction 2")
-
-	// Menampilkan semua blok dalam blockchain
-	fmt.Println("Blockchain:")
-	for _, block := range bc.Blocks {
-		fmt.Printf("Index: %d\n", block.Index)
-		fmt.Printf("Timestamp: %s\n", time.Unix(block.Timestamp, 0))
-		fmt.Printf("Data: %s\n", block.Data.Data)
-		fmt.Printf("PrevHash: %x\n", block.PrevHash)
-		fmt.Printf("Hash: %x\n", block.Hash)
-		fmt.Println("------------------------------")
+	// Menambahkan peer secara manual
+	if *port == "3000" {
+		p2p.AddPeer("localhost:3001")
+		p2p.AddPeer("localhost:3002")
+	} else if *port == "3001" {
+		p2p.AddPeer("localhost:3000")
+		p2p.AddPeer("localhost:3002")
+	} else if *port == "3002" {
+		p2p.AddPeer("localhost:3000")
+		p2p.AddPeer("localhost:3001")
 	}
 
-	// Validasi blockchain
-	fmt.Println("Is blockchain valid?", bc.IsValid())
+	// Mendengarkan koneksi untuk menerima blok
+	go p2p.ListenForBlocks(*port)
+
+	if *port == "3000" {
+		// Membroadcast blok genesis ke semua peer
+		genesisBlock := blockchain.Block{Index: 0, Timestamp: 0, Data: blockchain.Data{Data: "Genesis Block"}}
+		p2p.BroadcastBlock(genesisBlock)
+	}
+
+	// Membaca input dari pengguna untuk menambahkan blok baru dan membroadcast-nya
+	go readInput(p2p)
+
+	// Menunggu agar program tetap berjalan
+	select {}
 }
