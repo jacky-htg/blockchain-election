@@ -2,36 +2,54 @@ package blockchain
 
 import (
 	"bytes"
+	"fmt"
+	"sync"
 	"time"
 )
 
 type Blockchain struct {
-	Blocks []Block
+	Blocks   []Block
+	Election *Election
+	mu       sync.Mutex
 }
 
-func (bc *Blockchain) AddBlock(data string) Block {
-	var newBlock Block
+func (bc *Blockchain) SetGenesisBlock() bool {
 	if len(bc.Blocks) == 0 {
-		newBlock = createBlock(0, "Genesis Block", []byte{})
-	} else {
-		prevBlock := bc.Blocks[len(bc.Blocks)-1]
-		newBlock = createBlock(prevBlock.Index+1, data, prevBlock.Hash)
+		// Membuat dan membroadcast blok genesis.
+		genesisBlock := Block{
+			Index:     0,
+			Timestamp: time.Now().Unix(),
+			Data:      VoteData{VoterID: "system", CandidateID: "Genesis Block"},
+		}
+		pow := NewProofOfWork(&genesisBlock)
+		nonce, hash := pow.Run()
+		genesisBlock.Hash = hash
+		genesisBlock.Nonce = nonce
+
+		if pow.Validate() {
+			if bc.AddBlock(genesisBlock) {
+				fmt.Println("Added genesis block:", genesisBlock.Data.VoterID)
+				return true
+			}
+		} else {
+			fmt.Println("Failed to validate genesis block")
+		}
+	}
+
+	return false
+}
+
+func (bc *Blockchain) AddBlock(newBlock Block) bool {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	for _, block := range bc.Blocks {
+		if bytes.Equal(block.Hash, newBlock.Hash) {
+			return false
+		}
 	}
 	bc.Blocks = append(bc.Blocks, newBlock)
-	return newBlock
-}
-
-func createBlock(index int, data string, prevHash []byte) Block {
-	newData := Data{Data: data}
-	block := Block{
-		Index:     index,
-		Timestamp: time.Now().Unix(),
-		Data:      newData,
-		PrevHash:  prevHash,
-		Hash:      []byte{},
-	}
-	block.Hash = block.calculateHash()
-	return block
+	return true
 }
 
 func (bc *Blockchain) IsValid() bool {
@@ -39,12 +57,24 @@ func (bc *Blockchain) IsValid() bool {
 		currentBlock := bc.Blocks[i]
 		prevBlock := bc.Blocks[i-1]
 
-		if !bytes.Equal(currentBlock.Hash, currentBlock.calculateHash()) {
+		if !bytes.Equal(currentBlock.PrevHash, prevBlock.Hash) {
 			return false
 		}
-		if !bytes.Equal(currentBlock.PrevHash, prevBlock.Hash) {
+
+		pow := NewProofOfWork(&currentBlock)
+		if !pow.Validate() {
 			return false
 		}
 	}
 	return true
+}
+
+func (bc *Blockchain) SyncWithPeer(peerBlocks []Block, election *Election) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	if len(peerBlocks) > len(bc.Blocks) {
+		bc.Blocks = peerBlocks
+		bc.Election = election
+	}
 }
