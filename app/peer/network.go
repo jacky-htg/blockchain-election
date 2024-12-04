@@ -68,5 +68,7 @@ func (p2p *P2PNetwork) GetPeersFromBootstrap() ([]Peer, error) {
 		return nil, fmt.Errorf("gagal melakukan unmarshal response: %v", err)
 	}
 
+	fmt.Println("peers:", peers)
+
 	return peers, nil
 }

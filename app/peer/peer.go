@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bufio"
+	"crypto/ecdsa"
 	"fmt"
 	"myapp/app/blockchain"
 	"net"
@@ -11,12 +12,13 @@ import (
 
 type RegisterRequest struct {
 	Type    string `json:"type"`
-	Payload string `json:"payload"`
+	Payload []byte `json:"payload"`
 }
 
 // Peer struct
 type Peer struct {
-	Address string `json:"address"`
+	Address   string `json:"address"`
+	PublicKey string `json:"publicKey"`
 }
 
 type P2PNetwork struct {
@@ -24,25 +26,29 @@ type P2PNetwork struct {
 	Blockchain *blockchain.Blockchain
 	bootstrap  string // Alamat bootstrap server
 	localAddr  string // Alamat lokal peer
+	privateKey *ecdsa.PrivateKey
+	publicKey  []byte
 }
 
-func NewP2PNetwork(bootstrap, localAddr string) *P2PNetwork {
+func NewP2PNetwork(bootstrap, localAddr string, privateKey *ecdsa.PrivateKey, publicKey []byte) *P2PNetwork {
 	return &P2PNetwork{
 		peers:      make([]Peer, 0),
 		Blockchain: &blockchain.Blockchain{},
 		bootstrap:  bootstrap,
 		localAddr:  localAddr,
+		privateKey: privateKey,
+		publicKey:  publicKey,
 	}
 }
 
-func (p2p *P2PNetwork) AddPeer(address string) {
+func (p2p *P2PNetwork) AddPeer(newPeer Peer) {
 	for _, peer := range p2p.peers {
-		if peer.Address == address {
+		if peer.Address == newPeer.Address {
 			return // Peer sudah ada
 		}
 	}
-	peer := Peer{Address: address}
-	p2p.peers = append(p2p.peers, peer)
+	p2p.peers = append(p2p.peers, newPeer)
+	fmt.Println(p2p.peers)
 }
 
 func (p2p *P2PNetwork) RemovePeer(address string) {
@@ -52,6 +58,7 @@ func (p2p *P2PNetwork) RemovePeer(address string) {
 			return
 		}
 	}
+	fmt.Println(p2p.peers)
 }
 
 func (p2p *P2PNetwork) RegisterToBootstrap() error {
@@ -61,12 +68,21 @@ func (p2p *P2PNetwork) RegisterToBootstrap() error {
 	}
 	defer conn.Close()
 
-	// Membuat payload untuk didaftarkan ke bootstrap
-	payload := RegisterRequest{
-		Type:    "REGISTER",
-		Payload: p2p.localAddr,
+	var peer Peer = Peer{
+		Address:   p2p.localAddr,
+		PublicKey: string(p2p.publicKey),
 	}
-	data, err := sonic.Marshal(payload)
+
+	payload, err := sonic.Marshal(peer)
+	if err != nil {
+		return fmt.Errorf("gagal melakukan marshal data: %v", err)
+	}
+
+	request := RegisterRequest{
+		Type:    "REGISTER",
+		Payload: payload,
+	}
+	data, err := sonic.Marshal(request)
 	if err != nil {
 		return fmt.Errorf("gagal melakukan marshal data: %v", err)
 	}
@@ -92,10 +108,16 @@ func (p2p *P2PNetwork) NotifyBootstrapOnShutdown() {
 	}
 	defer conn.Close()
 
-	payload := RegisterRequest{
-		Type:    "REMOVE",
-		Payload: p2p.localAddr,
+	var peer Peer = Peer{
+		Address: p2p.localAddr,
 	}
-	data, _ := sonic.Marshal(payload)
+
+	payload, _ := sonic.Marshal(peer)
+
+	request := RegisterRequest{
+		Type:    "REMOVE",
+		Payload: payload,
+	}
+	data, _ := sonic.Marshal(request)
 	conn.Write(append(data, '\n'))
 }

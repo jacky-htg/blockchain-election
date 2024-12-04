@@ -2,8 +2,10 @@ package peer
 
 import (
 	"bufio"
+	"crypto/ecdsa"
 	"fmt"
 	"myapp/app/blockchain"
+	"myapp/app/pkg/signature"
 	"net"
 	"time"
 
@@ -20,8 +22,10 @@ const (
 )
 
 type Message struct {
-	Type MessageType `json:"type"`
-	Data []byte      `json:"data"`
+	Type          MessageType         `json:"type"`
+	Data          []byte              `json:"data"`
+	Signature     signature.Signature `json:"signature"`
+	SenderAddress string              `json:"senderAddress"`
 }
 
 // Handler untuk setiap koneksi peer
@@ -43,8 +47,46 @@ func (p2p *P2PNetwork) handleConnection(conn net.Conn) {
 		return
 	}
 
+	println("incoming message type:", incomingMessage.Type)
+	fmt.Println(p2p.peers)
+
 	switch incomingMessage.Type {
 	case BlockchainUpdate:
+		remoteAddr := incomingMessage.SenderAddress
+		var publicKey *ecdsa.PublicKey
+		for _, peer := range p2p.peers {
+			if peer.Address == remoteAddr {
+				// Decode public key dari string ke *ecdsa.PublicKey
+				decodedPubKey, err := signature.DeserializePublicKey([]byte(peer.PublicKey))
+				if err != nil {
+					fmt.Println("Error decoding public key:", err)
+					return
+				}
+				publicKey = decodedPubKey
+				break
+			}
+		}
+
+		if publicKey == nil {
+			fmt.Println("Public key not found for address:", remoteAddr)
+			return
+		}
+
+		isValid, err := signature.VerifySignature(
+			incomingMessage.Signature,
+			incomingMessage.Data,
+			publicKey,
+		)
+		if err != nil {
+			fmt.Println("Error during signature verification:", err)
+			return
+		}
+
+		if !isValid {
+			fmt.Println("Invalid signature. Ignoring message.")
+			return
+		}
+
 		// Verifikasi dan update blockchain
 		var blockchainData *blockchain.Blockchain
 		if err := sonic.Unmarshal(incomingMessage.Data, &blockchainData); err != nil {
@@ -64,7 +106,13 @@ func (p2p *P2PNetwork) handleConnection(conn net.Conn) {
 		conn.Write(response)
 
 	case NewPeerJoined:
-		p2p.AddPeer(string(incomingMessage.Data))
+		peer := &Peer{}
+		err := sonic.Unmarshal(incomingMessage.Data, peer)
+		if err != nil {
+			fmt.Println("Error decoding peer:", err)
+			return
+		}
+		p2p.AddPeer(*peer)
 
 	case ShutdownPeer:
 		p2p.RemovePeer(string(incomingMessage.Data))
@@ -140,6 +188,7 @@ func (p2p *P2PNetwork) HandleVote(voterID, candidateID string) {
 
 func (p2p *P2PNetwork) RequestBlockchainFromPeers() {
 	for _, peer := range p2p.peers {
+		fmt.Println("requesting blockchain from peer:", peer)
 		conn, err := net.Dial("tcp", peer.Address)
 		if err != nil {
 			fmt.Println("Error connecting to peer:", err)

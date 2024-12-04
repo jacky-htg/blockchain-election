@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"myapp/app/blockchain"
 	"myapp/app/peer"
+	"myapp/app/pkg/signature"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,14 +14,24 @@ import (
 )
 
 func main() {
-	address := flag.String("address", "localhost:3000", "Address for node p2p network")
+	address := flag.String("address", "localhost:5000", "Address for node p2p network")
 	init := flag.Bool("init", false, "init blockchain")
 	flag.Parse()
 
 	bootstrapAddress := "localhost:4000"
 	// Membuat jaringan P2P dan kontrak voting.
-	p2p := peer.NewP2PNetwork(bootstrapAddress, *address)
-
+	privateKey, err := signature.LoadOrCreateKeyPair("key.pem")
+	if err != nil {
+		fmt.Println("Error generating keys:", err)
+		return
+	}
+	publicKey, err := signature.SerializePublicKey(&privateKey.PublicKey)
+	if err != nil {
+		fmt.Println("Error serializing public key:", err)
+		return
+	}
+	println(string(publicKey))
+	p2p := peer.NewP2PNetwork(bootstrapAddress, *address, privateKey, publicKey)
 	p2p.RegisterToBootstrap()
 
 	// Inisialisasi blockchain dengan instance Election
@@ -36,8 +47,10 @@ func main() {
 	}
 
 	for _, peer := range peers {
+		fmt.Println("get peer from bootstrap", peer, peer.Address)
 		if peer.Address != *address {
-			p2p.AddPeer(peer.Address)
+			p2p.AddPeer(peer)
+			println("menambahkan: ", peer.Address)
 		}
 	}
 
